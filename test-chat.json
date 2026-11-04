@@ -1,0 +1,14 @@
+﻿{
+    "messages":  [
+                     {
+                         "id":  "1",
+                         "parts":  [
+                                       {
+                                           "text":  "Say hello in five words.",
+                                           "type":  "text"
+                                       }
+                                   ],
+                         "role":  "user"
+                     }
+                 ]
+}
