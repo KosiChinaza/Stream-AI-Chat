@@ -8,7 +8,7 @@ import { google } from "@ai-sdk/google";
 export const PROVIDERS = {
   google: {
     name: "Google Gemini",
-    model: "gemini-3.8-flash",
+    model: "gemini-3.5-flash-lite",
     apiKeyEnv: "GOOGLE_GENERATIVE_AI_API_KEY",
     createModel: google,
   },
