@@ -36,3 +36,15 @@ export const MAX_OUTPUT_TOKENS = 64000;
 
 // Reject oversized requests before they reach the model.
 export const MAX_MESSAGES = 100;
+
+// Server-side time limits for one response, so a slow or stalled provider
+// ends with an error instead of holding the request open until the hosting
+// platform kills it (Vercel's limit is 300 s, set by `maxDuration` in the route).
+export const TIMEOUTS = {
+  firstOutputMs: 45_000, // no output yet (covers connecting, retries and model "thinking")
+  chunkMs: 30_000, // output stopped arriving mid-reply
+  totalMs: 240_000, // whole response, kept under the platform limit
+};
+
+// Retries for failed provider calls (e.g. 429/503) before giving up.
+export const MAX_RETRIES = 2;

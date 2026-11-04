@@ -10,9 +10,15 @@ import {
 import {
   MAX_MESSAGES,
   MAX_OUTPUT_TOKENS,
+  MAX_RETRIES,
   SYSTEM_PROMPT,
+  TIMEOUTS,
   getActiveProvider,
 } from "@/lib/aiConfig";
+
+// Longest this function may run on Vercel (seconds). TIMEOUTS.totalMs ends
+// responses before this, so the platform never has to kill the function.
+export const maxDuration = 300;
 
 function errorResponse(message, status) {
   return Response.json({ error: message }, { status });
@@ -46,6 +52,8 @@ function getStreamErrorMessage(rawError, providerName) {
   // SDK gives up; the provider's actual error is its `lastError`.
   const error = RetryError.isInstance(rawError) ? rawError.lastError : rawError;
 
+  if (error?.name === "TimeoutError") return getTimeoutMessage(providerName);
+
   if (APICallError.isInstance(error)) {
     const status = error.statusCode;
     const invalidKey =
@@ -59,6 +67,27 @@ function getStreamErrorMessage(rawError, providerName) {
     }
   }
   return "Something went wrong while generating a response. Please try again.";
+}
+
+function getTimeoutMessage(providerName) {
+  return `${providerName} took too long to respond. Please try again.`;
+}
+
+// The SDK ends a timed-out stream with an "abort" chunk, which useChat treats
+// like the user pressing Stop: no error is shown. Turn it into an error chunk
+// so the UI can show one. Aborts caused by the client disconnecting (Stop,
+// closed tab) are left alone; nobody is listening to that response anyway.
+function reportTimeouts(requestSignal, providerName) {
+  return new TransformStream({
+    transform(chunk, controller) {
+      if (chunk.type === "abort" && !requestSignal.aborted) {
+        console.error(`[api/chat] ${providerName} timed out: ${chunk.reason ?? "no reason given"}`);
+        controller.enqueue({ type: "error", errorText: getTimeoutMessage(providerName) });
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
 }
 
 // POST /api/chat
@@ -98,19 +127,42 @@ export async function POST(req) {
     return errorResponse("The last message must come from the user.", 400);
   }
 
+  // The SDK's own first-chunk timeout only starts once the provider has sent
+  // response headers, so it misses a request that never gets a response.
+  // This timer starts now and is cleared by the first output.
+  const firstOutput = new AbortController();
+  const firstOutputTimer = setTimeout(() => {
+    firstOutput.abort(
+      new DOMException(`No output within ${TIMEOUTS.firstOutputMs}ms`, "TimeoutError"),
+    );
+  }, TIMEOUTS.firstOutputMs);
+  const clearFirstOutputTimer = () => clearTimeout(firstOutputTimer);
+  // onChunk also sees bookkeeping chunks ("start", "start-step") that are
+  // sent before the provider has replied, so only real output counts.
+  const clearOnOutput = ({ chunk }) => {
+    if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") clearFirstOutputTimer();
+  };
+
   const result = streamText({
     model: provider.createModel(provider.model),
     instructions: SYSTEM_PROMPT,
     messages: await convertToModelMessages(validation.data),
     maxOutputTokens: MAX_OUTPUT_TOKENS,
-    // Stop generating (and billing) if the client disconnects.
-    abortSignal: req.signal,
+    maxRetries: MAX_RETRIES,
+    // Stop generating (and billing) if the client disconnects or no output
+    // arrives in time.
+    abortSignal: AbortSignal.any([req.signal, firstOutput.signal]),
+    // Fail instead of hanging if output stalls mid-reply or runs too long.
+    timeout: { chunkMs: TIMEOUTS.chunkMs, totalMs: TIMEOUTS.totalMs },
+    onChunk: clearOnOutput,
+    onEnd: clearFirstOutputTimer,
+    onAbort: clearFirstOutputTimer,
   });
 
   return createUIMessageStreamResponse({
     stream: toUIMessageStream({
       stream: result.stream,
       onError: (error) => getStreamErrorMessage(error, provider.name),
-    }),
+    }).pipeThrough(reportTimeouts(req.signal, provider.name)),
   });
 }
