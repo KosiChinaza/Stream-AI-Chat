@@ -2,7 +2,7 @@
 
 A responsive AI chat app that streams replies as they are generated, rendering Markdown live. Built for the FlyRank Week 4 Frontend AI Engineering assignment with Next.js, React, JavaScript, Tailwind CSS, and the Vercel AI SDK.
 
-**Live demo:** https://stream-ai-chat-kosisochukwu-chinaza-ugwus-projects.vercel.app
+**Live demo:** https://stream-ai-chat-rho.vercel.app/
 
 ## Features
 
